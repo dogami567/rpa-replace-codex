@@ -61,11 +61,17 @@ public sealed class DesktopTools
         [Description("Window title regex match.")] string? windowTitleRegex = null,
         [Description("Window handle (HWND) as hex string, e.g. 0x1234.")] string? windowHwnd = null,
         [Description("Target element Name.")] string? name = null,
+        [Description("Target element Name substring match.")] string? nameContains = null,
         [Description("Target element Name regex.")] string? nameRegex = null,
         [Description("Target element AutomationId.")] string? automationId = null,
         [Description("Target element ClassName.")] string? className = null,
         [Description("Target element ControlType (e.g., Button, Edit).")] string? controlType = null,
-        [Description("Which match index to return (0-based).")] int index = 0)
+        [Description("Which match index to return (0-based).")] int index = 0,
+        [Description("UIA tree view: raw | control | content.")] string? tree = null,
+        [Description("TreeScope: descendants | children.")] string? scope = null,
+        [Description("Search timeout in milliseconds (0 = default).")] int timeoutMs = 0,
+        [Description("Search max depth (0 = unlimited).")] int maxDepth = 0,
+        [Description("Search max nodes (0 = default).")] int maxNodes = 0)
     {
         var windowQuery = new UiaWindowQuery(
             Title: windowTitle,
@@ -83,11 +89,17 @@ public sealed class DesktopTools
 
         var elementQuery = new UiaElementQuery(
             Name: name,
+            NameContains: nameContains,
             NameRegex: nameRegex,
             AutomationId: automationId,
             ClassName: className,
             ControlType: controlType,
-            Index: index);
+            Index: index,
+            Tree: tree,
+            Scope: scope,
+            TimeoutMs: timeoutMs,
+            MaxDepth: maxDepth,
+            MaxNodes: maxNodes);
 
         var element = UiaQuery.FindElement(root, elementQuery);
         if (element is null)
@@ -105,13 +117,20 @@ public sealed class DesktopTools
         [Description("Window title regex match.")] string? windowTitleRegex = null,
         [Description("Window handle (HWND) as hex string, e.g. 0x1234.")] string? windowHwnd = null,
         [Description("Target element Name.")] string? name = null,
+        [Description("Target element Name substring match.")] string? nameContains = null,
+        [Description("Target element Name regex match.")] string? nameRegex = null,
         [Description("Target element AutomationId.")] string? automationId = null,
         [Description("Target element ClassName.")] string? className = null,
         [Description("Target element ControlType (e.g., Button, Edit).")] string? controlType = null,
         [Description("Which match index to click (0-based).")] int index = 0,
-        [Description("Bring the target window to foreground before clicking.")] bool focusWindow = true)
+        [Description("Bring the target window to foreground before clicking.")] bool focusWindow = true,
+        [Description("UIA tree view: raw | control | content.")] string? tree = null,
+        [Description("TreeScope: descendants | children.")] string? scope = null,
+        [Description("Search timeout in milliseconds (0 = default).")] int timeoutMs = 0,
+        [Description("Search max depth (0 = unlimited).")] int maxDepth = 0,
+        [Description("Search max nodes (0 = default).")] int maxNodes = 0)
     {
-        var element = TryFindElement(windowTitle, windowTitleRegex, windowHwnd, name, null, automationId, className, controlType, index);
+        var element = TryFindElement(windowTitle, windowTitleRegex, windowHwnd, name, nameContains, nameRegex, automationId, className, controlType, index, tree, scope, timeoutMs, maxDepth, maxNodes);
         if (element is null)
         {
             return ErrorResult("Element not found.");
@@ -148,14 +167,21 @@ public sealed class DesktopTools
         [Description("Window title regex match.")] string? windowTitleRegex = null,
         [Description("Window handle (HWND) as hex string, e.g. 0x1234.")] string? windowHwnd = null,
         [Description("Target element Name.")] string? name = null,
+        [Description("Target element Name substring match.")] string? nameContains = null,
+        [Description("Target element Name regex match.")] string? nameRegex = null,
         [Description("Target element AutomationId.")] string? automationId = null,
         [Description("Target element ClassName.")] string? className = null,
         [Description("Target element ControlType (e.g., Edit).")] string? controlType = null,
         [Description("Which match index to type into (0-based).")] int index = 0,
         [Description("Clear existing value if ValuePattern is used.")] bool clearFirst = true,
-        [Description("Bring the target window to foreground before typing.")] bool focusWindow = true)
+        [Description("Bring the target window to foreground before typing.")] bool focusWindow = true,
+        [Description("UIA tree view: raw | control | content.")] string? tree = null,
+        [Description("TreeScope: descendants | children.")] string? scope = null,
+        [Description("Search timeout in milliseconds (0 = default).")] int timeoutMs = 0,
+        [Description("Search max depth (0 = unlimited).")] int maxDepth = 0,
+        [Description("Search max nodes (0 = default).")] int maxNodes = 0)
     {
-        var element = TryFindElement(windowTitle, windowTitleRegex, windowHwnd, name, null, automationId, className, controlType, index);
+        var element = TryFindElement(windowTitle, windowTitleRegex, windowHwnd, name, nameContains, nameRegex, automationId, className, controlType, index, tree, scope, timeoutMs, maxDepth, maxNodes);
         if (element is null)
         {
             return ErrorResult("Element not found.");
@@ -478,7 +504,7 @@ public sealed class DesktopTools
         [Description("Which match index to invoke (0-based).")] int index = 0,
         [Description("Bring the target window to foreground before invoking.")] bool focusWindow = true)
     {
-        var element = TryFindElement(windowTitle, windowTitleRegex, windowHwnd, name, null, automationId, className, controlType, index);
+        var element = TryFindElement(windowTitle, windowTitleRegex, windowHwnd, name, null, null, automationId, className, controlType, index, tree: null, scope: null, timeoutMs: 0, maxDepth: 0, maxNodes: 0);
         if (element is null)
         {
             return ErrorResult("Element not found.");
@@ -505,6 +531,7 @@ public sealed class DesktopTools
         [Description("Window title regex match.")] string? windowTitleRegex = null,
         [Description("Window handle (HWND) as hex string, e.g. 0x1234.")] string? windowHwnd = null,
         [Description("Target element Name.")] string? name = null,
+        [Description("Target element Name substring match.")] string? nameContains = null,
         [Description("Target element Name regex.")] string? nameRegex = null,
         [Description("Target element AutomationId.")] string? automationId = null,
         [Description("Target element ClassName.")] string? className = null,
@@ -523,7 +550,22 @@ public sealed class DesktopTools
         var sw = Stopwatch.StartNew();
         while (sw.ElapsedMilliseconds <= timeoutMs)
         {
-            var element = TryFindElement(windowTitle, windowTitleRegex, windowHwnd, name, nameRegex, automationId, className, controlType, index);
+            var element = TryFindElement(
+                windowTitle,
+                windowTitleRegex,
+                windowHwnd,
+                name,
+                nameContains,
+                nameRegex,
+                automationId,
+                className,
+                controlType,
+                index,
+                tree: null,
+                scope: null,
+                timeoutMs: 0,
+                maxDepth: 0,
+                maxNodes: 0);
             if (waitExists && element is not null)
             {
                 return JsonResult(new { ok = true, state = "exists", elapsedMs = sw.ElapsedMilliseconds, element = DescribeElement(element) });
@@ -547,12 +589,18 @@ public sealed class DesktopTools
         [Description("Window title regex match.")] string? windowTitleRegex = null,
         [Description("Window handle (HWND) as hex string, e.g. 0x1234.")] string? windowHwnd = null,
         [Description("Target element Name.")] string? name = null,
+        [Description("Target element Name substring match.")] string? nameContains = null,
         [Description("Target element AutomationId.")] string? automationId = null,
         [Description("Target element ClassName.")] string? className = null,
         [Description("Target element ControlType (e.g., Edit).")] string? controlType = null,
         [Description("Which match index to capture (0-based).")] int index = 0,
         [Description("Capture full desktop if true.")] bool fullDesktop = false,
-        [Description("If set, saves PNG to this path and returns JSON instead of inline image data.")] string? outputPath = null)
+        [Description("If set, saves PNG to this path and returns JSON instead of inline image data.")] string? outputPath = null,
+        [Description("UIA tree view: raw | control | content.")] string? tree = null,
+        [Description("TreeScope: descendants | children.")] string? scope = null,
+        [Description("Search timeout in milliseconds (0 = default).")] int timeoutMs = 0,
+        [Description("Search max depth (0 = unlimited).")] int maxDepth = 0,
+        [Description("Search max nodes (0 = default).")] int maxNodes = 0)
     {
         NativeRect rect;
 
@@ -560,9 +608,9 @@ public sealed class DesktopTools
         {
             rect = GetVirtualDesktopRect();
         }
-        else if (!string.IsNullOrWhiteSpace(name) || !string.IsNullOrWhiteSpace(automationId) || !string.IsNullOrWhiteSpace(className) || !string.IsNullOrWhiteSpace(controlType))
+        else if (!string.IsNullOrWhiteSpace(name) || !string.IsNullOrWhiteSpace(nameContains) || !string.IsNullOrWhiteSpace(automationId) || !string.IsNullOrWhiteSpace(className) || !string.IsNullOrWhiteSpace(controlType))
         {
-            var element = TryFindElement(windowTitle, windowTitleRegex, windowHwnd, name, null, automationId, className, controlType, index);
+            var element = TryFindElement(windowTitle, windowTitleRegex, windowHwnd, name, nameContains, null, automationId, className, controlType, index, tree, scope, timeoutMs, maxDepth, maxNodes);
             if (element is null)
             {
                 return ErrorResult("Element not found.");
@@ -769,23 +817,37 @@ public sealed class DesktopTools
                     windowTitleRegex: GetString(args, "windowTitleRegex"),
                     windowHwnd: GetString(args, "windowHwnd"),
                     name: GetString(args, "name"),
+                    nameContains: GetString(args, "nameContains"),
+                    nameRegex: GetString(args, "nameRegex"),
                     automationId: GetString(args, "automationId"),
                     className: GetString(args, "className"),
                     controlType: GetString(args, "controlType"),
                     index: GetInt(args, "index") ?? 0,
-                    focusWindow: GetBool(args, "focusWindow") ?? true),
+                    focusWindow: GetBool(args, "focusWindow") ?? true,
+                    tree: GetString(args, "tree"),
+                    scope: GetString(args, "scope"),
+                    timeoutMs: GetInt(args, "timeoutMs") ?? 0,
+                    maxDepth: GetInt(args, "maxDepth") ?? 0,
+                    maxNodes: GetInt(args, "maxNodes") ?? 0),
                 "type" => TypeText(
                     text: GetRequiredString(args, "text"),
                     windowTitle: GetString(args, "windowTitle"),
                     windowTitleRegex: GetString(args, "windowTitleRegex"),
                     windowHwnd: GetString(args, "windowHwnd"),
                     name: GetString(args, "name"),
+                    nameContains: GetString(args, "nameContains"),
+                    nameRegex: GetString(args, "nameRegex"),
                     automationId: GetString(args, "automationId"),
                     className: GetString(args, "className"),
                     controlType: GetString(args, "controlType"),
                     index: GetInt(args, "index") ?? 0,
                     clearFirst: GetBool(args, "clearFirst") ?? true,
-                    focusWindow: GetBool(args, "focusWindow") ?? true),
+                    focusWindow: GetBool(args, "focusWindow") ?? true,
+                    tree: GetString(args, "tree"),
+                    scope: GetString(args, "scope"),
+                    timeoutMs: GetInt(args, "timeoutMs") ?? 0,
+                    maxDepth: GetInt(args, "maxDepth") ?? 0,
+                    maxNodes: GetInt(args, "maxNodes") ?? 0),
                 "hotkey" => Hotkey(
                     keys: GetRequiredString(args, "keys"),
                     delayMs: GetInt(args, "delayMs") ?? 0),
@@ -812,6 +874,7 @@ public sealed class DesktopTools
                     windowTitleRegex: GetString(args, "windowTitleRegex"),
                     windowHwnd: GetString(args, "windowHwnd"),
                     name: GetString(args, "name"),
+                    nameContains: GetString(args, "nameContains"),
                     nameRegex: GetString(args, "nameRegex"),
                     automationId: GetString(args, "automationId"),
                     className: GetString(args, "className"),
@@ -988,11 +1051,17 @@ public sealed class DesktopTools
         string? windowTitleRegex,
         string? windowHwnd,
         string? name,
+        string? nameContains,
         string? nameRegex,
         string? automationId,
         string? className,
         string? controlType,
-        int index)
+        int index,
+        string? tree,
+        string? scope,
+        int timeoutMs,
+        int maxDepth,
+        int maxNodes)
     {
         var windowQuery = new UiaWindowQuery(
             Title: windowTitle,
@@ -1010,11 +1079,17 @@ public sealed class DesktopTools
 
         var elementQuery = new UiaElementQuery(
             Name: name,
+            NameContains: nameContains,
             NameRegex: nameRegex,
             AutomationId: automationId,
             ClassName: className,
             ControlType: controlType,
-            Index: index);
+            Index: index,
+            Tree: tree,
+            Scope: scope,
+            TimeoutMs: timeoutMs,
+            MaxDepth: maxDepth,
+            MaxNodes: maxNodes);
 
         return UiaQuery.FindElement(root, elementQuery);
     }

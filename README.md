@@ -1,6 +1,6 @@
-# rpa-replace
+# rpa-replace-codex
 
-Windows 桌面端 RPA（UI Automation）能力的 MCP Server 雏形，用法尽量对齐 Playwright 的「定位器 + 操作」思路（先 UIA Pattern，必要时再走坐标/输入注入）。
+Windows 桌面端 RPA（UI Automation）能力的 MCP Server（适配 Codex CLI / 任意 MCP Client）。用法尽量对齐 Playwright 的「定位器 + 操作」思路：优先走 UIA Pattern，必要时再走坐标/输入注入兜底。
 
 ## 运行环境
 
@@ -21,6 +21,7 @@ dotnet run --project src/RpaReplace.DesktopAgent -c Release
 当前提供（名称以 `tools/list` 为准）：
 
 - `list_windows`：枚举顶层窗口（HWND、标题、进程、矩形）
+- `batch`：把多个动作合并一次调用（减少 MCP 往返，整体更快）
 - `inspect`：按屏幕坐标（默认鼠标当前位置）取 UIA 元素信息
 - `query`：在窗口范围内查找 UIA 元素并返回信息
 - `click`：优先 `InvokePattern`，否则按 `BoundingRectangle` 中心点鼠标点击
@@ -41,15 +42,15 @@ dotnet run --project src/RpaReplace.DesktopAgent -c Release
 
 ## 接入 Codex CLI（MCP）
 
-构建完成后，把 DesktopAgent 作为 MCP server 配到 Codex 里即可。
+构建完成后，把 DesktopAgent 作为 MCP server 配到 Codex 里即可（需要绝对路径）。
 
 如果你用的是 `config.toml` 里的 `[mcp_servers.*]` 配置方式（示例路径按你本机修改）：
 
 ```toml
 [mcp_servers.rpa-desktop-agent]
-command = "D:\\xiangmu\\rpa-replace\\src\\RpaReplace.DesktopAgent\\bin\\Release\\net8.0-windows\\RpaReplace.DesktopAgent.exe"
+command = "C:\\path\\to\\rpa-replace-codex\\src\\RpaReplace.DesktopAgent\\bin\\Release\\net8.0-windows\\RpaReplace.DesktopAgent.exe"
 args = []
-startup_timeout_sec = 20.0
+startup_timeout_sec = 30.0
 ```
 
 也可以用 `dotnet + dll`（优点是路径更稳定）：
@@ -57,8 +58,8 @@ startup_timeout_sec = 20.0
 ```toml
 [mcp_servers.rpa-desktop-agent]
 command = "dotnet"
-args = ["D:\\xiangmu\\rpa-replace\\src\\RpaReplace.DesktopAgent\\bin\\Release\\net8.0-windows\\RpaReplace.DesktopAgent.dll"]
-startup_timeout_sec = 20.0
+args = ["C:\\path\\to\\rpa-replace-codex\\src\\RpaReplace.DesktopAgent\\bin\\Release\\net8.0-windows\\RpaReplace.DesktopAgent.dll"]
+startup_timeout_sec = 30.0
 ```
 
 如果你用的是 `mcp.json`（`C:\\Users\\<you>\\.codex\\mcp.json`），加一段：
@@ -67,7 +68,7 @@ startup_timeout_sec = 20.0
 {
   "mcpServers": {
     "rpa-desktop-agent": {
-      "command": "D:\\\\xiangmu\\\\rpa-replace\\\\src\\\\RpaReplace.DesktopAgent\\\\bin\\\\Release\\\\net8.0-windows\\\\RpaReplace.DesktopAgent.exe",
+      "command": "C:\\\\path\\\\to\\\\rpa-replace-codex\\\\src\\\\RpaReplace.DesktopAgent\\\\bin\\\\Release\\\\net8.0-windows\\\\RpaReplace.DesktopAgent.exe",
       "args": []
     }
   }
@@ -75,6 +76,14 @@ startup_timeout_sec = 20.0
 ```
 
 修改配置后重启 Codex，随后在对话里就可以直接调用 `list_windows` / `query` / `click` / `type` / `hotkey` 等工具。
+
+## 性能建议（重要）
+
+- 优先传 `windowHwnd`（从 `list_windows` 拿）而不是每次都用 `windowTitle` 做模糊匹配。
+- 优先用 `automationId` / `controlType` / `className` 缩小范围；`nameRegex` 是最后手段。
+- `nameContains` 比 `nameRegex` 更便宜（但仍可能触发慢路径遍历）。
+- 查找慢/找不到时可用：`tree=control`（更快）/`tree=raw`（更全），以及 `scope=children`、`timeoutMs`、`maxDepth`、`maxNodes` 做边界控制。
+- 多步操作尽量用 `batch` 合并，避免一条条工具调用的往返开销。
 
 ## 不用时怎么关 / 卡顿处理
 
