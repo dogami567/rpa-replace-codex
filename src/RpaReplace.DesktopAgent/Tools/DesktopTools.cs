@@ -629,6 +629,77 @@ public sealed class DesktopTools
         };
     }
 
+    [McpServerTool(Name = "batch", UseStructuredContent = true)]
+    [Description("Execute multiple actions in a single call to reduce round trips.")]
+    public static async Task<CallToolResult> Batch(
+        [Description("JSON array string of objects: [{\"tool\":\"click\",\"arguments\":{...}}, ...].")] string stepsJson,
+        [Description("Stop execution on first error.")] bool stopOnError = true)
+    {
+        if (string.IsNullOrWhiteSpace(stepsJson))
+        {
+            return ErrorResult("stepsJson is required.");
+        }
+
+        JsonDocument doc;
+        try
+        {
+            doc = JsonDocument.Parse(stepsJson);
+        }
+        catch (Exception ex)
+        {
+            return ErrorResult($"Invalid stepsJson: {ex.Message}");
+        }
+
+        using (doc)
+        {
+            if (doc.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                return ErrorResult("stepsJson must be a JSON array: [{\"tool\":\"...\",\"arguments\":{...}}, ...].");
+            }
+
+            var results = new List<object>();
+
+            int i = 0;
+            foreach (var step in doc.RootElement.EnumerateArray())
+            {
+                string? tool = null;
+                JsonElement? args = null;
+
+                if (step.ValueKind == JsonValueKind.Object && step.TryGetProperty("tool", out var toolEl))
+                {
+                    tool = toolEl.ValueKind == JsonValueKind.String ? toolEl.GetString() : toolEl.ToString();
+                }
+
+                if (step.ValueKind == JsonValueKind.Object && step.TryGetProperty("arguments", out var argsEl))
+                {
+                    args = argsEl;
+                }
+
+                var sw = Stopwatch.StartNew();
+                CallToolResult result = await ExecuteBatchStep(tool, args);
+                sw.Stop();
+
+                results.Add(new
+                {
+                    index = i,
+                    tool,
+                    ok = !result.IsError,
+                    elapsedMs = sw.ElapsedMilliseconds,
+                    output = SummarizeBatchResult(result),
+                });
+
+                if (result.IsError == true && stopOnError)
+                {
+                    return JsonResult(new { ok = false, stoppedAt = i, results });
+                }
+
+                i++;
+            }
+
+            return JsonResult(new { ok = true, results });
+        }
+    }
+
     private static CallToolResult JsonResult(object value)
     {
         string json = JsonSerializer.Serialize(value, JsonOptions);
@@ -651,6 +722,209 @@ public sealed class DesktopTools
             ],
             IsError = true,
         };
+
+    private static object SummarizeBatchResult(CallToolResult result)
+    {
+        string? text = null;
+        int imageBlocks = 0;
+
+        if (result.Content is not null)
+        {
+            foreach (var block in result.Content)
+            {
+                if (block is TextContentBlock t && text is null)
+                {
+                    text = t.Text;
+                }
+                else if (block is ImageContentBlock)
+                {
+                    imageBlocks++;
+                }
+            }
+        }
+
+        return new
+        {
+            isError = result.IsError,
+            text,
+            imageBlocks,
+        };
+    }
+
+    private static async Task<CallToolResult> ExecuteBatchStep(string? toolName, JsonElement? args)
+    {
+        string tool = (toolName ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(tool))
+        {
+            return ErrorResult("Missing step tool.");
+        }
+
+        try
+        {
+            return tool switch
+            {
+                "sleep" => BatchSleep(args),
+                "click" => Click(
+                    windowTitle: GetString(args, "windowTitle"),
+                    windowTitleRegex: GetString(args, "windowTitleRegex"),
+                    windowHwnd: GetString(args, "windowHwnd"),
+                    name: GetString(args, "name"),
+                    automationId: GetString(args, "automationId"),
+                    className: GetString(args, "className"),
+                    controlType: GetString(args, "controlType"),
+                    index: GetInt(args, "index") ?? 0,
+                    focusWindow: GetBool(args, "focusWindow") ?? true),
+                "type" => TypeText(
+                    text: GetRequiredString(args, "text"),
+                    windowTitle: GetString(args, "windowTitle"),
+                    windowTitleRegex: GetString(args, "windowTitleRegex"),
+                    windowHwnd: GetString(args, "windowHwnd"),
+                    name: GetString(args, "name"),
+                    automationId: GetString(args, "automationId"),
+                    className: GetString(args, "className"),
+                    controlType: GetString(args, "controlType"),
+                    index: GetInt(args, "index") ?? 0,
+                    clearFirst: GetBool(args, "clearFirst") ?? true,
+                    focusWindow: GetBool(args, "focusWindow") ?? true),
+                "hotkey" => Hotkey(
+                    keys: GetRequiredString(args, "keys"),
+                    delayMs: GetInt(args, "delayMs") ?? 0),
+                "keyboard_type" => KeyboardType(
+                    text: GetRequiredString(args, "text"),
+                    delayMsBetweenChars: GetInt(args, "delayMsBetweenChars") ?? 0,
+                    submit: GetBool(args, "submit") ?? false),
+                "key_press" => KeyPress(
+                    key: GetRequiredString(args, "key"),
+                    repeat: GetInt(args, "repeat") ?? 1,
+                    interKeyDelayMs: GetInt(args, "interKeyDelayMs") ?? 0),
+                "mouse_click" => MouseClick(
+                    button: GetString(args, "button") ?? "left",
+                    x: GetInt(args, "x"),
+                    y: GetInt(args, "y")),
+                "mouse_move" => MouseMove(
+                    x: GetRequiredInt(args, "x"),
+                    y: GetRequiredInt(args, "y"),
+                    steps: GetInt(args, "steps") ?? 1,
+                    durationMs: GetInt(args, "durationMs") ?? 0),
+                "wait_for" => await WaitFor(
+                    state: GetRequiredString(args, "state"),
+                    windowTitle: GetString(args, "windowTitle"),
+                    windowTitleRegex: GetString(args, "windowTitleRegex"),
+                    windowHwnd: GetString(args, "windowHwnd"),
+                    name: GetString(args, "name"),
+                    nameRegex: GetString(args, "nameRegex"),
+                    automationId: GetString(args, "automationId"),
+                    className: GetString(args, "className"),
+                    controlType: GetString(args, "controlType"),
+                    index: GetInt(args, "index") ?? 0,
+                    timeoutMs: GetInt(args, "timeoutMs") ?? 10000,
+                    pollIntervalMs: GetInt(args, "pollIntervalMs") ?? 200),
+                _ => ErrorResult($"Unsupported step tool: {tool}"),
+            };
+        }
+        catch (Exception ex)
+        {
+            return ErrorResult(ex.Message);
+        }
+    }
+
+    private static CallToolResult BatchSleep(JsonElement? args)
+    {
+        int ms = GetInt(args, "ms") ?? 0;
+        ms = Math.Clamp(ms, 0, 60000);
+        if (ms > 0)
+        {
+            Thread.Sleep(ms);
+        }
+
+        return JsonResult(new { ok = true, ms });
+    }
+
+    private static bool TryGetProperty(JsonElement? obj, string name, out JsonElement value)
+    {
+        value = default;
+        if (!obj.HasValue || obj.Value.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        return obj.Value.TryGetProperty(name, out value);
+    }
+
+    private static string? GetString(JsonElement? obj, string name)
+    {
+        if (!TryGetProperty(obj, name, out JsonElement value))
+        {
+            return null;
+        }
+
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString(),
+            JsonValueKind.Null => null,
+            JsonValueKind.Undefined => null,
+            _ => value.ToString(),
+        };
+    }
+
+    private static string GetRequiredString(JsonElement? obj, string name)
+    {
+        var value = GetString(obj, name);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new InvalidOperationException($"Missing required argument '{name}'.");
+        }
+
+        return value;
+    }
+
+    private static int? GetInt(JsonElement? obj, string name)
+    {
+        if (!TryGetProperty(obj, name, out JsonElement value))
+        {
+            return null;
+        }
+
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int i))
+        {
+            return i;
+        }
+
+        if (value.ValueKind == JsonValueKind.String && int.TryParse(value.GetString(), out int s))
+        {
+            return s;
+        }
+
+        return null;
+    }
+
+    private static int GetRequiredInt(JsonElement? obj, string name) =>
+        GetInt(obj, name) ?? throw new InvalidOperationException($"Missing required argument '{name}'.");
+
+    private static bool? GetBool(JsonElement? obj, string name)
+    {
+        if (!TryGetProperty(obj, name, out JsonElement value))
+        {
+            return null;
+        }
+
+        if (value.ValueKind == JsonValueKind.True)
+        {
+            return true;
+        }
+
+        if (value.ValueKind == JsonValueKind.False)
+        {
+            return false;
+        }
+
+        if (value.ValueKind == JsonValueKind.String && bool.TryParse(value.GetString(), out bool b))
+        {
+            return b;
+        }
+
+        return null;
+    }
 
     private static long? ParseHwnd(string? hwnd)
     {

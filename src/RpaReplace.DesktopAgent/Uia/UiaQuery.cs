@@ -126,7 +126,7 @@ internal static class UiaQuery
 
         if (!string.IsNullOrWhiteSpace(query.TitleRegex))
         {
-            var regex = new Regex(query.TitleRegex, RegexOptions.Compiled | RegexOptions.IgnoreCase);
+            var regex = new Regex(query.TitleRegex, RegexOptions.IgnoreCase);
             if (!regex.IsMatch(title))
             {
                 return false;
@@ -137,6 +137,82 @@ internal static class UiaQuery
     }
 
     public static AutomationElement? FindElement(AutomationElement root, UiaElementQuery query)
+    {
+        // Fast path: use native UIA query whenever possible (avoids walking the entire tree).
+        if (string.IsNullOrWhiteSpace(query.NameRegex) && query.Index == 0)
+        {
+            Condition condition = BuildCondition(query);
+            return root.FindFirst(TreeScope.Descendants, condition);
+        }
+
+        // Slower paths (regex / index>0): avoid FindAll(...) which can be extremely expensive on large UI trees.
+        var expectedIndex = query.Index < 0 ? 0 : query.Index;
+        Regex? nameRegex = null;
+        if (!string.IsNullOrWhiteSpace(query.NameRegex))
+        {
+            nameRegex = new Regex(query.NameRegex, RegexOptions.IgnoreCase);
+        }
+
+        int seen = 0;
+        foreach (var el in EnumerateDescendants(root))
+        {
+            if (!ElementMatches(el, query, nameRegex))
+            {
+                continue;
+            }
+
+            if (seen == expectedIndex)
+            {
+                return el;
+            }
+
+            seen++;
+        }
+
+        return null;
+    }
+
+    private static bool WindowMatches(WindowInfo window, UiaWindowQuery query)
+    {
+        if (query.ProcessId is not null && window.ProcessId != query.ProcessId.Value)
+        {
+            return false;
+        }
+
+        string title = window.Title ?? string.Empty;
+
+        if (!string.IsNullOrWhiteSpace(query.Title))
+        {
+            if (!title.Contains(query.Title, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.TitleRegex))
+        {
+            var regex = new Regex(query.TitleRegex, RegexOptions.IgnoreCase);
+            if (!regex.IsMatch(title))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static ControlType? ControlTypeFromString(string value)
+    {
+        string normalized = value.Trim();
+        if (normalized.StartsWith("ControlType.", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized["ControlType.".Length..];
+        }
+
+        return ControlTypeMap.Value.TryGetValue(normalized, out var ct) ? ct : null;
+    }
+
+    private static Condition BuildCondition(UiaElementQuery query)
     {
         var conditions = new List<Condition>();
 
@@ -164,78 +240,117 @@ internal static class UiaQuery
             }
         }
 
-        Condition condition = conditions.Count switch
+        return conditions.Count switch
         {
             0 => Condition.TrueCondition,
             1 => conditions[0],
             _ => new AndCondition(conditions.ToArray()),
         };
-
-        if (string.IsNullOrWhiteSpace(query.NameRegex) && query.Index == 0)
-        {
-            return root.FindFirst(TreeScope.Descendants, condition);
-        }
-
-        if (!string.IsNullOrWhiteSpace(query.NameRegex))
-        {
-            var regex = new Regex(query.NameRegex, RegexOptions.Compiled | RegexOptions.IgnoreCase);
-            var results = root.FindAll(TreeScope.Descendants, condition);
-            var filtered = new List<AutomationElement>();
-            for (int i = 0; i < results.Count; i++)
-            {
-                var el = results[i];
-                if (!regex.IsMatch(el.Current.Name ?? string.Empty))
-                {
-                    continue;
-                }
-
-                filtered.Add(el);
-            }
-
-            return query.Index >= 0 && query.Index < filtered.Count ? filtered[query.Index] : null;
-        }
-
-        var all = root.FindAll(TreeScope.Descendants, condition);
-        return query.Index >= 0 && query.Index < all.Count ? all[query.Index] : null;
     }
 
-    private static bool WindowMatches(WindowInfo window, UiaWindowQuery query)
+    private static IEnumerable<AutomationElement> EnumerateDescendants(AutomationElement root)
     {
-        if (query.ProcessId is not null && window.ProcessId != query.ProcessId.Value)
+        var walker = TreeWalker.RawViewWalker;
+
+        AutomationElement? current = null;
+        try
+        {
+            current = walker.GetFirstChild(root);
+        }
+        catch
+        {
+            yield break;
+        }
+
+        if (current is null)
+        {
+            yield break;
+        }
+
+        var stack = new Stack<AutomationElement>();
+        stack.Push(current);
+
+        while (stack.Count > 0)
+        {
+            var el = stack.Pop();
+            yield return el;
+
+            AutomationElement? sibling = null;
+            try
+            {
+                sibling = walker.GetNextSibling(el);
+            }
+            catch
+            {
+                // ignore
+            }
+
+            AutomationElement? child = null;
+            try
+            {
+                child = walker.GetFirstChild(el);
+            }
+            catch
+            {
+                // ignore
+            }
+
+            if (sibling is not null)
+            {
+                stack.Push(sibling);
+            }
+
+            if (child is not null)
+            {
+                stack.Push(child);
+            }
+        }
+    }
+
+    private static bool ElementMatches(AutomationElement element, UiaElementQuery query, Regex? nameRegex)
+    {
+        AutomationElement.AutomationElementInformation current;
+        try
+        {
+            current = element.Current;
+        }
+        catch
         {
             return false;
         }
 
-        string title = window.Title ?? string.Empty;
-
-        if (!string.IsNullOrWhiteSpace(query.Title))
+        if (!string.IsNullOrWhiteSpace(query.Name) && !string.Equals(current.Name ?? string.Empty, query.Name, StringComparison.Ordinal))
         {
-            if (!title.Contains(query.Title, StringComparison.OrdinalIgnoreCase))
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.AutomationId) && !string.Equals(current.AutomationId ?? string.Empty, query.AutomationId, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.ClassName) && !string.Equals(current.ClassName ?? string.Empty, query.ClassName, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(query.ControlType))
+        {
+            var ct = ControlTypeFromString(query.ControlType);
+            if (ct is not null && current.ControlType != ct)
             {
                 return false;
             }
         }
 
-        if (!string.IsNullOrWhiteSpace(query.TitleRegex))
+        if (nameRegex is not null)
         {
-            var regex = new Regex(query.TitleRegex, RegexOptions.Compiled | RegexOptions.IgnoreCase);
-            if (!regex.IsMatch(title))
+            if (!nameRegex.IsMatch(current.Name ?? string.Empty))
             {
                 return false;
             }
         }
 
         return true;
-    }
-
-    private static ControlType? ControlTypeFromString(string value)
-    {
-        string normalized = value.Trim();
-        if (normalized.StartsWith("ControlType.", StringComparison.OrdinalIgnoreCase))
-        {
-            normalized = normalized["ControlType.".Length..];
-        }
-
-        return ControlTypeMap.Value.TryGetValue(normalized, out var ct) ? ct : null;
     }
 }
